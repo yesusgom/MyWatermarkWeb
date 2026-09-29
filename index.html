@@ -3,296 +3,316 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Editor de marca de agua en el móvil: carga fotos, añade la marca y guárdalas en tu teléfono. Todo local, sin servidor.">
+<meta name="description" content="Editor de marca de agua que se adapta a móvil, tableta y escritorio. Carga fotos, añade la marca y guárdalas. Nada sale de tu ordenador.">
 <meta name="theme-color" content="#0e1117">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Marca de Agua">
-<title>Marca de Agua · móvil</title>
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
+<title>Marca de Agua · editor local de fotos</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>&#128247;</text></svg>">
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
 
-<div class="phone">
-
-    <!-- ================= CABECERA ================= -->
-    <header class="topbar">
-        <div class="topbar__brand">
-            <span class="topbar__logo" aria-hidden="true">◈</span>
+<header class="topbar">
+    <div class="topbar__brand">
+        <span class="topbar__logo" aria-hidden="true">◈</span>
+        <div>
             <h1>Marca de Agua</h1>
+            <p class="topbar__sub">Todo se procesa aquí. <strong>Nada se sube a ningún servidor.</strong></p>
         </div>
-        <span class="topbar__lock" title="Todo se procesa en este teléfono">🔒 local</span>
-    </header>
+    </div>
+    <p class="topbar__lock">
+        <span aria-hidden="true">🔒</span> Las fotos no salen de este dispositivo
+    </p>
+</header>
 
-    <nav class="tabs" role="tablist">
-        <button type="button" class="tab is-active" data-tab="preview" role="tab" aria-selected="true">Foto</button>
-        <button type="button" class="tab" data-tab="results" role="tab" aria-selected="false">
-            Resultados <span class="badge" id="result-count">0</span>
-        </button>
-    </nav>
+<main class="layout">
 
-    <!-- ================= VISTA PREVIA ================= -->
-    <section class="tab-pane is-active" data-pane="preview">
-        <div class="stage" id="stage">
-            <canvas id="preview-canvas" aria-label="Vista previa de la foto con la marca de agua"></canvas>
-            <p class="stage__empty" id="stage-empty">
-                Toca <strong>Fotos</strong> abajo para elegir imágenes.<br>
-                No se suben a ningún sitio.
+    <!-- ===================== AJUSTES (se mueve de sitio según la pantalla) ===================== -->
+    <aside class="panel panel--controls" id="sidebar">
+        <div id="controls">
+
+            <section class="card" data-sheet="photos">
+                <h2><span class="card__num">1</span> Fotos</h2>
+
+                <div class="dropzone" id="dropzone" tabindex="0" role="button"
+                     aria-label="Arrastra fotos aquí o pulsa para elegir archivos">
+                    <strong>Arrastra aquí tus fotos</strong>
+                    <span>o pulsa para elegir archivos</span>
+                    <small>JPG · PNG · WebP · AVIF · GIF</small>
+                </div>
+
+                <div class="pick-row">
+                    <button type="button" class="btn" id="photo-pick">Elegir fotos</button>
+                    <button type="button" class="btn" id="photo-pick-cam">Cámara</button>
+                </div>
+                <input type="file" id="photo-input" accept="image/*" multiple hidden>
+                <input type="file" id="cam-input" accept="image/*" capture="environment" hidden>
+
+                <div class="row row--split">
+                    <span class="muted" id="photo-count">0 fotos</span>
+                    <button type="button" class="btn btn--ghost btn--sm" id="clear-photos" disabled>Quitar todas</button>
+                </div>
+
+                <ul class="thumbs" id="photo-list" aria-label="Fotos cargadas"></ul>
+            </section>
+
+            <section class="card" data-sheet="mark">
+                <h2><span class="card__num">2</span> Marca de agua</h2>
+
+                <div class="segmented" role="tablist" aria-label="Tipo de marca de agua">
+                    <button type="button" class="seg is-active" data-wm="image" role="tab" aria-selected="true">Imagen</button>
+                    <button type="button" class="seg" data-wm="text" role="tab" aria-selected="false">Texto</button>
+                </div>
+
+                <div class="wm-pane" data-pane="image">
+                    <button type="button" class="btn btn--block" id="wm-pick">Elegir imagen de marca de agua</button>
+                    <input type="file" id="wm-input" accept="image/*" hidden>
+
+                    <div class="wm-box" id="wm-image-box">
+                        <img id="wm-image-preview" alt="Vista previa de la marca de agua" hidden>
+                        <div class="wm-box__empty" id="wm-image-meta">Ninguna imagen seleccionada</div>
+                        <button type="button" class="btn btn--ghost btn--sm" id="wm-image-clear" disabled>Quitar</button>
+                    </div>
+                </div>
+
+                <div class="wm-pane is-hidden" data-pane="text">
+                    <label class="field">
+                        <span>Texto <em>\n = salto de línea</em></span>
+                        <textarea id="wm-text" rows="2" spellcheck="false" placeholder="© Mi marca de agua"></textarea>
+                    </label>
+
+                    <label class="field">
+                        <span>Fuente</span>
+                        <select id="wm-font"></select>
+                    </label>
+
+                    <div class="chips">
+                        <label class="check"><input type="checkbox" id="wm-bold"><span>Negrita</span></label>
+                        <label class="check"><input type="checkbox" id="wm-italic"><span>Cursiva</span></label>
+                        <label class="check"><input type="checkbox" id="wm-stroke" checked><span>Contorno</span></label>
+                    </div>
+
+                    <div class="row row--2">
+                        <label class="field">
+                            <span>Color del texto</span>
+                            <input type="color" id="wm-color" value="#ffffff">
+                        </label>
+                        <label class="field">
+                            <span>Color del contorno</span>
+                            <input type="color" id="wm-stroke-color" value="#000000">
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card" data-sheet="place">
+                <h2><span class="card__num">3</span> Colocación</h2>
+
+                <div class="field">
+                    <span class="field__label">Posición <em>o arrastra la marca sobre la foto</em></span>
+                    <div class="pos-grid" id="pos-grid" role="group" aria-label="Posición de la marca de agua">
+                        <button type="button" class="pos" data-x="0"   data-y="0"   aria-label="Arriba izquierda"></button>
+                        <button type="button" class="pos" data-x="0.5" data-y="0"   aria-label="Arriba centro"></button>
+                        <button type="button" class="pos" data-x="1"   data-y="0"   aria-label="Arriba derecha"></button>
+                        <button type="button" class="pos" data-x="0"   data-y="0.5" aria-label="Centro izquierda"></button>
+                        <button type="button" class="pos" data-x="0.5" data-y="0.5" aria-label="Centro"></button>
+                        <button type="button" class="pos" data-x="1"   data-y="0.5" aria-label="Centro derecha"></button>
+                        <button type="button" class="pos" data-x="0"   data-y="1"   aria-label="Abajo izquierda"></button>
+                        <button type="button" class="pos" data-x="0.5" data-y="1"   aria-label="Abajo centro"></button>
+                        <button type="button" class="pos" data-x="1"   data-y="1"   aria-label="Abajo derecha"></button>
+                    </div>
+                </div>
+
+                <label class="check check--block">
+                    <input type="checkbox" id="wm-linked" checked>
+                    <span>La misma posición en todas las fotos</span>
+                </label>
+
+                <button type="button" class="btn btn--ghost btn--block is-hidden" id="btn-copy-placement">
+                    Copiar esta posición a todas
+                </button>
+
+                <p class="hint hint--tiny" id="placement-hint"></p>
+
+                <label class="field">
+                    <span>Tamaño <output id="out-size"></output></span>
+                    <input type="range" id="wm-size" min="2" max="100" step="1" value="25">
+                </label>
+
+                <label class="field">
+                    <span>Opacidad <output id="out-opacity"></output></span>
+                    <input type="range" id="wm-opacity" min="5" max="100" step="1" value="60">
+                </label>
+
+                <label class="field">
+                    <span>Rotación <output id="out-rotation"></output></span>
+                    <input type="range" id="wm-rotation" min="-180" max="180" step="1" value="0">
+                </label>
+
+                <label class="field">
+                    <span>Margen de seguridad <output id="out-margin"></output></span>
+                    <input type="range" id="wm-margin" min="0" max="25" step="0.5" value="3">
+                </label>
+
+                <label class="check check--block">
+                    <input type="checkbox" id="wm-repeat">
+                    <span>Repetir en mosaico</span>
+                </label>
+
+                <label class="field is-hidden" id="gap-field">
+                    <span>Separación <output id="out-gap"></output></span>
+                    <input type="range" id="wm-gap" min="0" max="60" step="1" value="8">
+                </label>
+            </section>
+
+            <section class="card" data-sheet="output">
+                <h2><span class="card__num">4</span> Salida</h2>
+
+                <label class="field">
+                    <span>Formato</span>
+                    <select id="out-format">
+                        <option value="image/jpeg">JPEG — más ligero</option>
+                        <option value="image/png">PNG — sin pérdida</option>
+                        <option value="image/webp">WebP — buen equilibrio</option>
+                    </select>
+                </label>
+
+                <label class="field" id="quality-field">
+                    <span>Calidad <output id="out-quality"></output></span>
+                    <input type="range" id="out-quality-range" min="40" max="100" step="1" value="90">
+                </label>
+
+                <label class="field is-hidden" id="bg-field">
+                    <span>Fondo de relleno <em>(solo JPEG)</em></span>
+                    <input type="color" id="out-bg" value="#ffffff">
+                </label>
+
+                <label class="field">
+                    <span>Ancho máximo de la foto</span>
+                    <select id="out-max">
+                        <option value="0">Original (sin reescalar)</option>
+                        <option value="3840">3840 px</option>
+                        <option value="2560">2560 px</option>
+                        <option value="1920">1920 px</option>
+                        <option value="1600">1600 px</option>
+                        <option value="1280">1280 px</option>
+                        <option value="1080">1080 px</option>
+                        <option value="800">800 px</option>
+                    </select>
+                </label>
+
+                <details class="disclosure">
+                    <summary>Nombre del archivo</summary>
+                    <div class="row row--2">
+                        <label class="field">
+                            <span>Prefijo</span>
+                            <input type="text" id="name-prefix" value="wm_" spellcheck="false" autocomplete="off">
+                        </label>
+                        <label class="field">
+                            <span>Sufijo</span>
+                            <input type="text" id="name-suffix" value="" spellcheck="false" autocomplete="off">
+                        </label>
+                    </div>
+                </details>
+
+                <button type="button" class="btn btn--block is-hidden" id="btn-share">Compartir resultados</button>
+            </section>
+
+        </div>
+    </aside>
+
+    <!-- ===================== TRABAJO ===================== -->
+    <section class="panel panel--main" aria-label="Trabajo">
+
+        <div class="tabs" role="tablist">
+            <button type="button" class="tab is-active" data-tab="preview" role="tab" aria-selected="true">Vista previa</button>
+            <button type="button" class="tab" data-tab="results" role="tab" aria-selected="false">
+                Resultados <span class="badge" id="result-count">0</span>
+            </button>
+        </div>
+
+        <div class="tab-pane is-active" data-pane="preview">
+            <div class="stage" id="stage">
+                <canvas id="preview-canvas" aria-label="Vista previa de la foto con la marca de agua"></canvas>
+                <p class="stage__empty" id="stage-empty">
+                    Añade al menos una foto para empezar.<br>
+                    Tienes <strong>0 fotos</strong> ahora mismo.
+                </p>
+            </div>
+
+            <p class="hint" id="preview-hint"></p>
+
+            <p class="hint hint--keys">
+                <span class="keys-desktop">Arrastra la marca sobre la foto ·
+                    <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd> mueven ·
+                    <kbd>+</kbd><kbd>−</kbd> tamaño · <kbd>R</kbd> rota · <kbd>0</kbd> centra</span>
             </p>
-        </div>
-        <p class="hint hint--tiny" id="preview-hint"></p>
 
-        <div class="filmstrip" id="filmstrip" aria-label="Cambiar de foto"></div>
-    </section>
-
-    <!-- ================= RESULTADOS ================= -->
-    <section class="tab-pane is-hidden" data-pane="results">
-        <div class="results-head">
-            <p id="results-head"></p>
-            <button type="button" class="btn btn--ghost btn--sm" id="btn-clear-results" disabled>Descartar</button>
+            <div class="filmstrip" id="filmstrip" aria-label="Cambiar de foto"></div>
         </div>
-        <div class="results-scroll">
-            <div class="results-grid" id="results-grid"></div>
-            <p class="stage__empty" id="results-empty">Aún no hay resultados.</p>
+
+        <div class="tab-pane is-hidden" data-pane="results">
+            <div class="results-head">
+                <p id="results-head"></p>
+                <button type="button" class="btn btn--ghost btn--sm" id="btn-clear-results" disabled>Descartar resultados</button>
+            </div>
+            <div class="results-scroll">
+                <div class="results-grid" id="results-grid"></div>
+                <p class="stage__empty" id="results-empty">Todavía no has generado ningún resultado.</p>
+            </div>
         </div>
     </section>
+</main>
 
-    <!-- ================= ACCIONES ================= -->
-    <div class="dock">
-        <p class="dock__status" id="status">Sin fotos</p>
+<!-- ===================== ACCIONES ===================== -->
+<footer class="actionbar" id="actionbar">
+    <p class="actionbar__status" id="status">Sin fotos</p>
 
-        <div class="dock__actions">
-            <button type="button" class="btn btn--primary btn--block" id="btn-apply" disabled>Aplicar marca de agua</button>
-            <button type="button" class="btn btn--block" id="btn-download-all" hidden>Descargar todo (.zip)</button>
-            <button type="button" class="btn btn--ghost btn--block" id="btn-cancel" hidden>Cancelar</button>
-        </div>
-
-        <div class="progress is-hidden" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-            <div class="progress__bar" id="progress-bar"></div>
-        </div>
-
-        <nav class="dock__nav" aria-label="Ajustes">
-            <button type="button" class="dock-btn" data-sheet="photos">
-                <span class="dock-btn__icon" aria-hidden="true">🖼</span>
-                <span class="dock-btn__label">Fotos</span>
-                <span class="dock-btn__badge" id="dock-count">0</span>
-            </button>
-            <button type="button" class="dock-btn" data-sheet="mark">
-                <span class="dock-btn__icon" aria-hidden="true">◈</span>
-                <span class="dock-btn__label">Marca</span>
-            </button>
-            <button type="button" class="dock-btn" data-sheet="place">
-                <span class="dock-btn__icon" aria-hidden="true">✛</span>
-                <span class="dock-btn__label">Colocar</span>
-            </button>
-            <button type="button" class="dock-btn" data-sheet="output">
-                <span class="dock-btn__icon" aria-hidden="true">⇩</span>
-                <span class="dock-btn__label">Salida</span>
-            </button>
-        </nav>
+    <div class="actionbar__buttons">
+        <button type="button" class="btn btn--primary" id="btn-apply" disabled>Aplicar marca de agua</button>
+        <button type="button" class="btn" id="btn-download-all" hidden>Descargar todo (.zip)</button>
+        <button type="button" class="btn btn--ghost" id="btn-cancel" hidden>Cancelar</button>
     </div>
 
-</div>
+    <div class="progress is-hidden" id="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="progress__bar" id="progress-bar"></div>
+    </div>
 
-<!-- ================= HOJAS DESLIZANTES ================= -->
+    <nav class="docknav" aria-label="Ajustes">
+        <button type="button" class="dock-btn" data-sheet="photos">
+            <span class="dock-btn__icon" aria-hidden="true">🖼</span>
+            <span class="dock-btn__label">Fotos</span>
+            <span class="dock-btn__badge" id="dock-count"></span>
+        </button>
+        <button type="button" class="dock-btn" data-sheet="mark">
+            <span class="dock-btn__icon" aria-hidden="true">◈</span>
+            <span class="dock-btn__label">Marca</span>
+        </button>
+        <button type="button" class="dock-btn" data-sheet="place">
+            <span class="dock-btn__icon" aria-hidden="true">✛</span>
+            <span class="dock-btn__label">Colocar</span>
+        </button>
+        <button type="button" class="dock-btn" data-sheet="output">
+            <span class="dock-btn__icon" aria-hidden="true">⇩</span>
+            <span class="dock-btn__label">Salida</span>
+        </button>
+    </nav>
+</footer>
+
+<!-- ===================== HOJA DESPLEGABLE (solo móvil) ===================== -->
 <div class="sheet-backdrop is-hidden" id="sheet-backdrop"></div>
 
 <div class="sheet is-hidden" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <div class="sheet__grab" id="sheet-grab" aria-hidden="true"></div>
-
     <header class="sheet__head">
         <h2 id="sheet-title">Fotos</h2>
-        <button type="button" class="icon-btn icon-btn--close" id="sheet-close" aria-label="Cerrar">×</button>
+        <button type="button" class="icon-btn" id="sheet-close" aria-label="Cerrar">×</button>
     </header>
-
-    <div class="sheet__body">
-
-        <!-- ---------- FOTOS ---------- -->
-        <div class="sheet-pane" data-sheet="photos">
-            <div class="pick-row">
-                <button type="button" class="btn btn--block" id="photo-pick">Elegir fotos</button>
-                <button type="button" class="btn btn--block" id="photo-pick-cam">Cámara</button>
-            </div>
-            <input type="file" id="photo-input" accept="image/*" multiple hidden>
-            <input type="file" id="cam-input" accept="image/*" capture="environment" hidden>
-
-            <p class="hint hint--tiny">También puedes arrastrar las fotos sobre esta hoja.</p>
-
-            <div class="row row--split">
-                <span class="muted" id="photo-count">0 fotos</span>
-                <button type="button" class="btn btn--ghost btn--sm" id="clear-photos" disabled>Quitar todas</button>
-            </div>
-
-            <ul class="thumbs" id="photo-list" aria-label="Fotos cargadas"></ul>
-        </div>
-
-        <!-- ---------- MARCA DE AGUA ---------- -->
-        <div class="sheet-pane is-hidden" data-sheet="mark">
-            <div class="segmented" role="tablist" aria-label="Tipo de marca de agua">
-                <button type="button" class="seg is-active" data-wm="image" role="tab" aria-selected="true">Imagen</button>
-                <button type="button" class="seg" data-wm="text" role="tab" aria-selected="false">Texto</button>
-            </div>
-
-            <div class="wm-pane" data-pane="image">
-                <button type="button" class="btn btn--block" id="wm-pick">Elegir imagen de marca de agua</button>
-                <input type="file" id="wm-input" accept="image/*" hidden>
-
-                <div class="wm-box" id="wm-image-box">
-                    <img id="wm-image-preview" alt="Marca de agua seleccionada" hidden>
-                    <div class="wm-box__empty" id="wm-image-meta">Ninguna imagen seleccionada</div>
-                    <button type="button" class="btn btn--ghost btn--sm" id="wm-image-clear" disabled>Quitar</button>
-                </div>
-            </div>
-
-            <div class="wm-pane is-hidden" data-pane="text">
-                <label class="field">
-                    <span>Texto <em>\n = salto de línea</em></span>
-                    <textarea id="wm-text" rows="2" spellcheck="false" placeholder="© Mi marca"></textarea>
-                </label>
-
-                <label class="field">
-                    <span>Fuente</span>
-                    <select id="wm-font"></select>
-                </label>
-
-                <div class="chips">
-                    <label class="check"><input type="checkbox" id="wm-bold"><span>Negrita</span></label>
-                    <label class="check"><input type="checkbox" id="wm-italic"><span>Cursiva</span></label>
-                    <label class="check"><input type="checkbox" id="wm-stroke" checked><span>Contorno</span></label>
-                </div>
-
-                <div class="row row--2">
-                    <label class="field">
-                        <span>Color del texto</span>
-                        <input type="color" id="wm-color" value="#ffffff">
-                    </label>
-                    <label class="field">
-                        <span>Color del contorno</span>
-                        <input type="color" id="wm-stroke-color" value="#000000">
-                    </label>
-                </div>
-            </div>
-        </div>
-
-        <!-- ---------- COLOCACIÓN ---------- -->
-        <div class="sheet-pane is-hidden" data-sheet="place">
-            <div class="field">
-                <span class="field__label">Posición <em>o arrastra la marca sobre la foto</em></span>
-                <div class="pos-grid" id="pos-grid" role="group" aria-label="Posición de la marca de agua">
-                    <button type="button" class="pos" data-x="0"   data-y="0"   aria-label="Arriba izquierda"></button>
-                    <button type="button" class="pos" data-x="0.5" data-y="0"   aria-label="Arriba centro"></button>
-                    <button type="button" class="pos" data-x="1"   data-y="0"   aria-label="Arriba derecha"></button>
-                    <button type="button" class="pos" data-x="0"   data-y="0.5" aria-label="Centro izquierda"></button>
-                    <button type="button" class="pos" data-x="0.5" data-y="0.5" aria-label="Centro"></button>
-                    <button type="button" class="pos" data-x="1"   data-y="0.5" aria-label="Centro derecha"></button>
-                    <button type="button" class="pos" data-x="0"   data-y="1"   aria-label="Abajo izquierda"></button>
-                    <button type="button" class="pos" data-x="0.5" data-y="1"   aria-label="Abajo centro"></button>
-                    <button type="button" class="pos" data-x="1"   data-y="1"   aria-label="Abajo derecha"></button>
-                </div>
-            </div>
-
-            <label class="check check--block">
-                <input type="checkbox" id="wm-linked" checked>
-                <span>La misma posición en todas las fotos</span>
-            </label>
-
-            <button type="button" class="btn btn--ghost btn--block is-hidden" id="btn-copy-placement">
-                Copiar esta posición a todas
-            </button>
-            <p class="hint hint--tiny" id="placement-hint"></p>
-
-            <label class="field">
-                <span>Tamaño <output id="out-size"></output></span>
-                <input type="range" id="wm-size" min="2" max="100" step="1" value="25">
-            </label>
-
-            <label class="field">
-                <span>Opacidad <output id="out-opacity"></output></span>
-                <input type="range" id="wm-opacity" min="5" max="100" step="1" value="60">
-            </label>
-
-            <label class="field">
-                <span>Rotación <output id="out-rotation"></output></span>
-                <input type="range" id="wm-rotation" min="-180" max="180" step="1" value="0">
-            </label>
-
-            <label class="field">
-                <span>Margen de seguridad <output id="out-margin"></output></span>
-                <input type="range" id="wm-margin" min="0" max="25" step="0.5" value="3">
-            </label>
-
-            <label class="check check--block">
-                <input type="checkbox" id="wm-repeat">
-                <span>Repetir en mosaico</span>
-            </label>
-
-            <label class="field is-hidden" id="gap-field">
-                <span>Separación <output id="out-gap"></output></span>
-                <input type="range" id="wm-gap" min="0" max="60" step="1" value="8">
-            </label>
-        </div>
-
-        <!-- ---------- SALIDA ---------- -->
-        <div class="sheet-pane is-hidden" data-sheet="output">
-            <label class="field">
-                <span>Formato</span>
-                <select id="out-format">
-                    <option value="image/jpeg">JPEG — más ligero</option>
-                    <option value="image/png">PNG — sin pérdida</option>
-                    <option value="image/webp">WebP — buen equilibrio</option>
-                </select>
-            </label>
-
-            <label class="field" id="quality-field">
-                <span>Calidad <output id="out-quality"></output></span>
-                <input type="range" id="out-quality-range" min="40" max="100" step="1" value="90">
-            </label>
-
-            <label class="field is-hidden" id="bg-field">
-                <span>Fondo de relleno <em>(solo JPEG)</em></span>
-                <input type="color" id="out-bg" value="#ffffff">
-            </label>
-
-            <label class="field">
-                <span>Ancho máximo de la foto</span>
-                <select id="out-max">
-                    <option value="0">Original (sin reescalar)</option>
-                    <option value="3840">3840 px</option>
-                    <option value="2560">2560 px</option>
-                    <option value="1920">1920 px</option>
-                    <option value="1600">1600 px</option>
-                    <option value="1280">1280 px</option>
-                    <option value="1080">1080 px</option>
-                    <option value="800">800 px</option>
-                </select>
-            </label>
-
-            <details class="disclosure">
-                <summary>Nombre del archivo</summary>
-                <div class="row row--2">
-                    <label class="field">
-                        <span>Prefijo</span>
-                        <input type="text" id="name-prefix" value="wm_" spellcheck="false" autocomplete="off">
-                    </label>
-                    <label class="field">
-                        <span>Sufijo</span>
-                        <input type="text" id="name-suffix" value="" spellcheck="false" autocomplete="off">
-                    </label>
-                </div>
-            </details>
-
-            <button type="button" class="btn btn--block" id="btn-share" hidden>Compartir resultados</button>
-            <p class="hint hint--tiny">Las fotos se procesan en este teléfono: no hay servidores ni internet de por medio.</p>
-        </div>
-
-    </div>
+    <div class="sheet__body" id="sheet-body"></div>
 </div>
 
-<!-- ================= AVISOS ================= -->
 <div class="drop-overlay is-hidden" id="drop-overlay" aria-hidden="true"><span>Suelta las fotos aquí</span></div>
 <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
@@ -300,14 +320,5 @@
 <script src="js/zip.js"></script>
 <script src="js/renderer.js"></script>
 <script src="js/app.js"></script>
-<script>
-    // Modo sin conexión: solo si la página se sirve por http(s)
-    if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-        window.addEventListener('load', function () {
-            navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
-                .catch(function () { /* sin offline */ });
-        });
-    }
-</script>
 </body>
 </html>

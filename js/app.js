@@ -1,13 +1,18 @@
 /* =============================================================
- * app.js — versión MÓVIL
+ * app.js — lógica de la aplicación (adaptativa)
  *
- * Mismas funciones que la versión de escritorio, adaptadas a
- * teléfono: una columna, hojas deslizantes en lugar de panel
- * lateral, tira de fotos para saltar de una a otra, botón de
- * cámara, vibración y "Compartir" cuando el móvil lo permite.
+ * Un solo código para móvil, tableta y escritorio. Lo único que
+ * cambia según la pantalla es DÓNDE viven los ajustes:
  *
- * Reglas de privacidad: no hay red. Las fotos se leen del disco
- * con createImageBitmap y se guardan con object URLs.
+ *   · ≥ 861 px  → los ajustes se quedan en la barra lateral
+ *   · ≤ 860 px  → los ajustes se mueven a una hoja deslizable y
+ *                 aparece una barra inferior con 4 accesos
+ *
+ * Para eso se mueve el bloque #controls de sitio con
+ * appendChild; todo el resto del código es idéntico en ambos casos.
+ *
+ * Privacidad: no hay red. Las fotos se leen del disco con
+ * createImageBitmap y se guardan con object URLs.
  * ============================================================= */
 (function (global) {
     'use strict';
@@ -19,15 +24,17 @@
     var $ = utils.$;
     var clamp = utils.clamp;
 
-    var STORAGE_KEY = 'wm.settings.v2';   // distinto del de escritorio: ajustes propios
-    var MAX_PHOTOS = 100;
-    var PREVIEW_MAX_WIDTH = 1000;         // en móvil menos pixeles = menos memoria
-    var BIG_FILE = 24 * 1024 * 1024;      // avisar a partir de 24 MB
-    var ZIP_WARN_BYTES = 700 * 1024 * 1024;
+    var STORAGE_KEY = 'wm.settings.v1';
+    var MOBILE_QUERY = '(max-width: 860px)';
+    var MAX_PHOTOS = 200;
+    var PREVIEW_MAX_WIDTH_DESKTOP = 1500;
+    var PREVIEW_MAX_WIDTH_MOBILE = 1000;
+    var BIG_FILE = 24 * 1024 * 1024;
+    var ZIP_WARN_BYTES = 1024 * 1024 * 1024;
 
     var DEFAULTS = {
         wmType: 'image',
-        text: '© Mi marca',
+        text: '© Mi marca de agua',
         font: renderer.FONTS[0].value,
         color: '#ffffff',
         strokeColor: '#000000',
@@ -41,9 +48,9 @@
         repeat: false,
         gapPct: 8,
         format: 'image/jpeg',
-        quality: 88,
+        quality: 90,
         background: '#ffffff',
-        maxWidth: 1600,
+        maxWidth: 0,
         prefix: 'wm_',
         suffix: '',
         anchorX: 0.5,
@@ -68,10 +75,19 @@
         busy: false,
         cancelRequested: false,
         sheet: null,
+        mobile: false,
         settings: loadSettings()
     };
 
     var dom = {};
+    var mq = null;
+
+    var SHEET_TITLES = {
+        photos: 'Fotos',
+        mark: 'Marca de agua',
+        place: 'Colocación',
+        output: 'Salida'
+    };
 
     /* =============================================================
      * Ajustes
@@ -101,7 +117,7 @@
     }, 250);
 
     /* =============================================================
-     * Posición: una para todas o una por foto
+     * MARCA DE AGUA
      * ============================================================= */
 
     function photoKey(photo) {
@@ -154,10 +170,6 @@
         toast('Posición copiada a ' + copied + ' foto' + (copied === 1 ? '' : 's') + '.', 'ok');
     }
 
-    /* =============================================================
-     * Marca de agua
-     * ============================================================= */
-
     function textSource(settings) {
         var s = settings || state.settings;
         if (!s.text || !s.text.trim()) return null;
@@ -197,7 +209,6 @@
         };
     }
 
-    /** Copia los ajustes para que el lote use siempre los mismos valores. */
     function buildPlan() {
         var snapshot = {};
         Object.keys(DEFAULTS).forEach(function (key) { snapshot[key] = state.settings[key]; });
@@ -215,7 +226,7 @@
     }
 
     /* =============================================================
-     * Avisos, vibración y progreso
+     * AVISOS
      * ============================================================= */
 
     function toast(message, kind) {
@@ -227,11 +238,13 @@
             node.style.opacity = '0';
             node.style.transition = 'opacity .25s';
             setTimeout(function () { if (node.parentNode) node.remove(); }, 260);
-        }, kind === 'err' ? 6000 : 3600);
+        }, kind === 'err' ? 6500 : 3800);
     }
 
     function buzz(ms) {
-        if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) { /* no soportado */ } }
+        if (state.mobile && navigator.vibrate) {
+            try { navigator.vibrate(ms); } catch (e) { /* no soportado */ }
+        }
     }
 
     function setProgress(ratio) {
@@ -250,13 +263,13 @@
     function setStatus(text) { $('#status').textContent = text; }
 
     /* =============================================================
-     * Fotos
+     * FOTOS
      * ============================================================= */
 
     function isImageFile(file) {
         if (!file) return false;
         if (file.type && file.type.indexOf('image/') === 0) return true;
-        return /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(file.name || '');
+        return /\.(jpe?g|png|webp|gif|bmp|avif|svg)$/i.test(file.name || '');
     }
 
     function addFiles(fileList) {
@@ -265,7 +278,7 @@
 
         var files = all.filter(isImageFile);
         if (!files.length) {
-            toast('Ninguno de esos archivos es una imagen.', 'warn');
+            toast('No se ha encontrado ninguna imagen compatible.', 'warn');
             return;
         }
 
@@ -279,7 +292,7 @@
                 break;
             }
             var file = files[i];
-            if (file.size > BIG_FILE) big++;
+            if (state.mobile && file.size > BIG_FILE) big++;
             state.photos.push({
                 id: utils.nextId(),
                 file: file,
@@ -299,13 +312,11 @@
         renderPhotos();
         ensurePreview();
         updateUI();
-
-        if (big) {
-            toast(big + ' foto(s) son muy grandes: puede ir lento el móvil.', 'warn');
-        } else if (added > 1) {
-            toast(added + ' fotos cargadas.', 'ok');
-        }
+        closeSheet();
         buzz(12);
+
+        if (big) toast(big + ' foto(s) son muy grandes: puede ir lento el móvil.', 'warn');
+        else if (added > 1) toast(added + ' fotos cargadas.', 'ok');
     }
 
     function removePhoto(id) {
@@ -351,8 +362,8 @@
         renderPhotos();
         ensurePreview();
         updateUI();
-        var strip = $('#filmstrip');
-        var active = strip.querySelector('.film.is-active');
+
+        var active = $('#filmstrip .film.is-active');
         if (active && active.scrollIntoView) {
             active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
@@ -367,7 +378,7 @@
         state.photos.forEach(function (photo, index) {
             var isActive = index === state.selected;
 
-            // --- Item de la hoja ---
+            /* --- Elemento de la lista de fotos --- */
             var item = utils.el('li', 'thumb' + (isActive ? ' is-active' : '') + (photo.error ? ' is-error' : ''));
             item.tabIndex = 0;
             item.setAttribute('role', 'button');
@@ -381,17 +392,17 @@
             var nameRow = utils.el('div', 'thumb__nameRow');
             nameRow.appendChild(utils.el('span', 'thumb__name', photo.name));
             if (hasOwnPlacement(photo)) {
-                var flag = utils.el('span', 'thumb__flag', 'propia');
-                flag.title = 'Esta foto tiene su propia posición';
+                var flag = utils.el('span', 'thumb__flag', 'posición propia');
+                flag.title = 'Esta foto tiene su propia posición de marca de agua';
                 nameRow.appendChild(flag);
             }
             body.appendChild(nameRow);
             body.appendChild(utils.el('span', 'thumb__meta',
                 photo.error ? photo.error : utils.formatBytes(photo.size)));
 
-            var remove = utils.el('button', 'icon-btn icon-btn--del', '×');
+            var remove = utils.el('button', 'icon-btn', '×');
             remove.type = 'button';
-            remove.title = 'Quitar';
+            remove.title = 'Quitar esta foto';
             remove.setAttribute('aria-label', 'Quitar ' + photo.name);
             remove.addEventListener('click', function (event) {
                 event.stopPropagation();
@@ -403,15 +414,22 @@
             item.appendChild(remove);
             item.addEventListener('click', function () {
                 selectPhoto(index);
-                closeSheet();
+                if (state.mobile) closeSheet();
+            });
+            item.addEventListener('keydown', function (event) {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    selectPhoto(index);
+                }
             });
             list.appendChild(item);
 
-            // --- Foto de la tira inferior ---
+            /* --- Foto de la tira inferior (solo se ve en móvil) --- */
             var film = utils.el('button', 'film' + (isActive ? ' is-active' : '') + (photo.error ? ' is-error' : ''));
             film.type = 'button';
             film.title = photo.name;
             film.setAttribute('aria-label', 'Foto ' + (index + 1) + ': ' + photo.name);
+
             var filmImg = document.createElement('img');
             filmImg.src = photo.url;
             filmImg.alt = '';
@@ -426,12 +444,18 @@
         var count = state.photos.length;
         $('#photo-count').textContent = count === 1 ? '1 foto' : count + ' fotos';
         $('#dock-count').textContent = count ? String(count) : '';
-        $('#dock-count').dataset.zero = count ? '0' : '1';
         $('#clear-photos').disabled = count === 0;
+
+        var empty = $('#stage-empty');
+        if (empty) {
+            empty.innerHTML = count
+                ? 'Selecciona una foto para ver la marca.'
+                : 'Añade al menos una foto para empezar.<br>Tienes <strong>0 fotos</strong> ahora mismo.';
+        }
     }
 
     /* =============================================================
-     * Vista previa
+     * VISTA PREVIA
      * ============================================================= */
 
     function ensurePreview() {
@@ -457,7 +481,9 @@
                 return;
             }
             utils.closeQuietly(state.preview);
-            state.preview = utils.shrink(bitmap, PREVIEW_MAX_WIDTH);
+            state.preview = utils.shrink(bitmap, state.mobile
+                ? PREVIEW_MAX_WIDTH_MOBILE
+                : PREVIEW_MAX_WIDTH_DESKTOP);
             drawPreview();
         }).catch(function (error) {
             console.error(error);
@@ -543,7 +569,7 @@
             var point = canvasPoint(event);
             if (!renderer.hitTest(point, state.previewInfo, drawOptions())) return;
 
-            event.preventDefault();          // evita que la página scrollee
+            event.preventDefault();
             state.dragging = true;
             state.dragOffset = {
                 x: point.x - state.previewInfo.place.cx,
@@ -581,8 +607,47 @@
         canvas.addEventListener('pointercancel', endDrag);
     }
 
+    function setupKeyboard() {
+        document.addEventListener('keydown', function (event) {
+            var target = event.target;
+            var tag = (target && target.tagName) || '';
+            if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (target && target.isContentEditable)) return;
+            if (state.busy || state.mobile) return;      // en móvil no hay teclado físico
+
+            var step = event.shiftKey ? 0.05 : 0.01;
+            var anchor = currentAnchor();
+            var handled = true;
+
+            switch (event.key) {
+                case 'ArrowLeft':  setAnchor(anchor.x - step, anchor.y); break;
+                case 'ArrowRight': setAnchor(anchor.x + step, anchor.y); break;
+                case 'ArrowUp':    setAnchor(anchor.x, anchor.y - step); break;
+                case 'ArrowDown':  setAnchor(anchor.x, anchor.y + step); break;
+                case '+': case '=':
+                    state.settings.sizePct = clamp(Number(state.settings.sizePct) + 1, 2, 100); break;
+                case '-': case '_':
+                    state.settings.sizePct = clamp(Number(state.settings.sizePct) - 1, 2, 100); break;
+                case 'r': case 'R':
+                    state.settings.rotation = Number(state.settings.rotation) + 5 > 180
+                        ? -180
+                        : Number(state.settings.rotation) + 5;
+                    break;
+                case '0':
+                    setAnchor(0.5, 0.5);
+                    break;
+                default: handled = false;
+            }
+
+            if (handled) {
+                event.preventDefault();
+                redraw();
+                updateUI();
+            }
+        });
+    }
+
     /* =============================================================
-     * Procesado
+     * PROCESADO
      * ============================================================= */
 
     function buildName(photo, settings, mime) {
@@ -710,23 +775,25 @@
             setProgress(null);
             updateUI();
             switchTab('results');
+            buzz([12, 40, 12]);
 
             var seconds = ((Date.now() - started) / 1000).toFixed(1);
-            buzz([12, 40, 12]);
             if (state.cancelRequested) {
                 toast('Cancelado (' + done + '/' + total + ').', 'warn');
             } else if (failed) {
-                toast(done + ' bien y ' + failed + ' con error.', 'warn');
+                toast('Terminado: ' + done + ' bien y ' + failed + ' con error.', 'warn');
             } else {
-                toast(done + ' foto' + (done === 1 ? '' : 's') + ' lista' +
+                toast(done + ' imagen' + (done === 1 ? '' : 'es') + ' lista' +
                     (done === 1 ? '' : 's') + ' en ' + seconds + ' s.', 'ok');
             }
-            if (fallbackFormat) toast('Tu navegador no codifica WebP: se ha guardado en PNG.', 'warn');
+            if (fallbackFormat) {
+                toast('Tu navegador no codifica en ese formato: se ha guardado en PNG.', 'warn');
+            }
         });
     }
 
     /* =============================================================
-     * Resultados, descarga y compartir
+     * RESULTADOS Y DESCARGAS
      * ============================================================= */
 
     function renderResults() {
@@ -769,14 +836,17 @@
         var totalBytes = state.results.reduce(function (sum, r) { return sum + r.blob.size; }, 0);
         $('#results-head').textContent = state.results.length
             ? state.results.length + ' imagen' + (state.results.length === 1 ? '' : 'es') +
-              ' · ' + utils.formatBytes(totalBytes)
+              ' preparada' + (state.results.length === 1 ? '' : 's') +
+              ' · ' + utils.formatBytes(totalBytes) + ' en total'
             : '';
 
         $('#results-empty').classList.toggle('is-hidden', state.results.length > 0);
         $('#result-count').textContent = String(state.results.length);
         $('#btn-clear-results').disabled = state.results.length === 0;
         $('#btn-download-all').hidden = state.results.length === 0;
-        $('#btn-share').hidden = state.results.length === 0;
+        $('#btn-share').hidden = state.results.length === 0 ||
+            !state.results.length ||
+            !(navigator.canShare && navigator.share);
     }
 
     function clearResults(notify) {
@@ -796,13 +866,13 @@
 
         var totalBytes = state.results.reduce(function (sum, r) { return sum + r.blob.size; }, 0);
         if (totalBytes > ZIP_WARN_BYTES) {
-            toast('El paquete es muy grande: puede que el móvil se quede sin memoria. ' +
-                  'Guárdalas por partes.', 'warn');
+            toast('El paquete supera 1 GB: puede que el navegador se quede sin memoria. ' +
+                  'Prueba a descargarlas por partes.', 'warn');
         }
 
         state.busy = true;
         updateUI();
-        setStatus('Empaquetando…');
+        setStatus('Empaquetando ' + state.results.length + ' imágenes…');
         setProgress(0);
 
         var files = [];
@@ -823,7 +893,7 @@
             setProgress(1);
             var blob = zip.create(files);
             utils.download(blob, 'marca-agua-' + utils.stamp() + '.zip');
-            toast('ZIP listo (' + utils.formatBytes(blob.size) + ').', 'ok');
+            toast('ZIP creado (' + utils.formatBytes(blob.size) + ').', 'ok');
         }).catch(function (error) {
             console.error(error);
             toast('No se ha podido crear el ZIP: ' + error.message, 'err');
@@ -834,7 +904,6 @@
         });
     }
 
-    /** Comparte los resultados con WhatsApp, correo, etc. (si el móvil lo permite). */
     function shareResults() {
         if (!state.results.length) return;
 
@@ -847,17 +916,15 @@
             return;
         }
 
-        navigator.share({
-            files: files,
-            title: 'Fotos con marca de agua'
-        }).catch(function (error) {
-            if (error && error.name === 'AbortError') return;   // el usuario canceló
-            toast('No se ha podido compartir.', 'err');
-        });
+        navigator.share({ files: files, title: 'Fotos con marca de agua' })
+            .catch(function (error) {
+                if (error && error.name === 'AbortError') return;
+                toast('No se ha podido compartir.', 'err');
+            });
     }
 
     /* =============================================================
-     * Interfaz
+     * ESTADO DE LA INTERFAZ
      * ============================================================= */
 
     function canApply() {
@@ -877,7 +944,7 @@
         $('#wm-rotation').value = s.rotation;
         $('#wm-margin').value = s.marginPct;
         $('#wm-gap').value = s.gapPct;
-        $('#out-size').textContent = s.sizePct + ' %';
+        $('#out-size').textContent = s.sizePct + ' % del ancho';
         $('#out-opacity').textContent = s.opacity + ' %';
         $('#out-rotation').textContent = s.rotation + '°';
         $('#out-margin').textContent = s.marginPct + ' %';
@@ -894,24 +961,27 @@
         $('#btn-copy-placement').classList.toggle('is-hidden', s.linked !== false);
         $('#placement-hint').textContent = s.linked
             ? 'Mueve la marca en cualquier foto: se aplicará igual en todas.'
-            : 'Cada foto guarda su posición. Usa la tira de abajo para saltar de una a otra.';
+            : (state.mobile
+                ? 'Cada foto guarda su posición. Usa la tira de abajo para saltar de una a otra.'
+                : 'Cada foto guarda su propia posición; las demás quedan donde estaban.');
 
         var photo = state.photos[state.selected];
         $('#preview-hint').textContent = photo
             ? 'Foto ' + (state.selected + 1) + ' de ' + state.photos.length +
               (s.linked ? '' : ' · posición propia') +
-              ' · arrastra la marca con el dedo'
+              (state.mobile ? ' · arrastra la marca con el dedo' : '')
             : '';
 
         if (state.busy) return;
 
         if (!state.photos.length) {
-            setStatus('Toca «Fotos» para elegir imágenes');
+            setStatus(state.mobile ? 'Toca «Fotos» para elegir imágenes' : 'Sin fotos: empieza arrastrando imágenes al panel.');
         } else if (!currentWatermarkSource()) {
-            setStatus('Falta la marca de agua: ve a «Marca»');
+            setStatus('Falta la marca de agua: elige una imagen o escribe un texto.');
         } else {
             setStatus(state.photos.length + ' foto' + (state.photos.length === 1 ? '' : 's') +
-                ' · marca del ' + s.sizePct + ' % del ancho');
+                ' lista' + (state.photos.length === 1 ? '' : 's') +
+                ' · la marca ocupará el ' + s.sizePct + ' % del ancho');
         }
     }
 
@@ -944,40 +1014,72 @@
     }
 
     /* =============================================================
-     * Hojas deslizantes
+     * ADAPTACIÓN A LA PANTALLA
+     *
+     * La clave de todo: el bloque #controls se traslada a la hoja
+     * deslizable en móvil y vuelve a la barra lateral en escritorio.
      * ============================================================= */
 
-    var SHEET_TITLES = {
-        photos: 'Fotos',
-        mark: 'Marca de agua',
-        place: 'Colocación',
-        output: 'Salida'
-    };
+    function applyLayout() {
+        var mobile = !!mq.matches;
+        if (mobile === state.mobile && dom.controls.parentNode === (mobile ? dom.sheetBody : dom.sidebar)) return;
+        state.mobile = mobile;
+
+        document.body.classList.toggle('is-mobile', mobile);
+
+        if (mobile) {
+            dom.sheetBody.appendChild(dom.controls);
+            // Dentro de la hoja solo se ve el bloque elegido
+            showSheetBlock(state.sheet || 'photos');
+        } else {
+            closeSheet();
+            dom.sidebar.appendChild(dom.controls);
+            dom.sheet.classList.add('is-hidden');
+            dom.sheetBackdrop.classList.add('is-hidden');
+        }
+
+        // El lienzo cambia de tamaño: hay que reescalar la vista previa
+        if (state.previewPhotoId) {
+            state.previewPhotoId = null;   // fuerza recargar/reducir la imagen
+            ensurePreview();
+        } else {
+            drawPreview();
+        }
+
+        renderPhotos();
+        updateUI();
+    }
+
+    function showSheetBlock(name) {
+        var cards = dom.controls.querySelectorAll('.card');
+        Array.prototype.forEach.call(cards, function (card) {
+            card.style.display = (card.dataset.sheet === name) ? '' : 'none';
+        });
+    }
 
     function openSheet(name) {
-        if (!SHEET_TITLES[name]) return;
+        if (!state.mobile || !SHEET_TITLES[name]) return;
         state.sheet = name;
         $('#sheet-title').textContent = SHEET_TITLES[name];
-        dom.sheetPanes.forEach(function (pane) {
-            pane.classList.toggle('is-hidden', pane.dataset.sheet !== name);
-        });
-        $('#sheet').classList.remove('is-hidden');
-        $('#sheet-backdrop').classList.remove('is-hidden');
-        document.body.classList.add('sheet-open');
+        showSheetBlock(name);
+        dom.sheet.classList.remove('is-hidden');
+        dom.sheetBackdrop.classList.remove('is-hidden');
     }
 
     function closeSheet() {
-        if (!state.sheet) return;
+        if (!state.sheet) {
+            dom.sheet.classList.add('is-hidden');
+            dom.sheetBackdrop.classList.add('is-hidden');
+            return;
+        }
         state.sheet = null;
-        $('#sheet').classList.add('is-hidden');
-        $('#sheet-backdrop').classList.add('is-hidden');
-        document.body.classList.remove('sheet-open');
+        dom.sheet.classList.add('is-hidden');
+        dom.sheetBackdrop.classList.add('is-hidden');
     }
 
-    /** Cierra la hoja arrastrando el tirador superior. */
     function setupSheetDrag() {
-        var sheet = $('#sheet');
-        var grab = $('#sheet-grab');
+        var sheet = dom.sheet;
+        var grab = dom.sheetGrab;
         var startY = 0;
         var dragging = false;
 
@@ -1010,7 +1112,7 @@
     }
 
     /* =============================================================
-     * Eventos
+     * ENLAZADO DE EVENTOS
      * ============================================================= */
 
     function bindValue(id, key, cast) {
@@ -1062,7 +1164,7 @@
             toast('Marca de agua cargada.', 'ok');
         }).catch(function (error) {
             console.error(error);
-            toast('No se ha podido cargar: ' + error.message, 'err');
+            toast('No se ha podido cargar esa imagen: ' + error.message, 'err');
         });
     }
 
@@ -1082,28 +1184,36 @@
         updateUI();
     }
 
-    function setupPickers() {
+    function setupPhotoInputs() {
         $('#photo-pick').addEventListener('click', function () { $('#photo-input').click(); });
         $('#photo-pick-cam').addEventListener('click', function () { $('#cam-input').click(); });
+        $('#dropzone').addEventListener('click', function () { $('#photo-input').click(); });
+        $('#dropzone').addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                $('#photo-input').click();
+            }
+        });
+        $('#dropzone').addEventListener('dragover', function (event) {
+            event.preventDefault();
+            $('#dropzone').classList.add('is-over');
+        });
+        $('#dropzone').addEventListener('dragleave', function () {
+            $('#dropzone').classList.remove('is-over');
+        });
+        $('#dropzone').addEventListener('drop', function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            $('#dropzone').classList.remove('is-over');
+            addFiles(event.dataTransfer.files);
+        });
 
         ['#photo-input', '#cam-input'].forEach(function (sel) {
             var input = $(sel);
             input.addEventListener('change', function () {
                 addFiles(input.files);
                 input.value = '';
-                closeSheet();
             });
-        });
-
-        $('#wm-pick').addEventListener('click', function () { $('#wm-input').click(); });
-        $('#wm-input').addEventListener('change', function () {
-            pickWatermarkImage(this.files && this.files[0]);
-            this.value = '';
-        });
-        $('#wm-image-clear').addEventListener('click', clearWatermarkImage);
-
-        document.querySelectorAll('.seg').forEach(function (seg) {
-            seg.addEventListener('click', function () { setWatermarkType(seg.dataset.wm); });
         });
     }
 
@@ -1115,6 +1225,11 @@
             var types = event.dataTransfer ? Array.prototype.slice.call(event.dataTransfer.types || []) : [];
             if (types.indexOf('Files') < 0) return;
             event.preventDefault();
+            if (event.target && event.target.closest && event.target.closest('#dropzone')) {
+                depth = 0;
+                overlay.classList.add('is-hidden');
+                return;
+            }
             depth++;
             overlay.classList.remove('is-hidden');
         });
@@ -1139,7 +1254,12 @@
         dom.tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
         dom.panes = Array.prototype.slice.call(document.querySelectorAll('.tab-pane'));
         dom.posButtons = Array.prototype.slice.call(document.querySelectorAll('.pos'));
-        dom.sheetPanes = Array.prototype.slice.call(document.querySelectorAll('.sheet-pane'));
+        dom.controls = $('#controls');
+        dom.sidebar = $('#sidebar');
+        dom.sheet = $('#sheet');
+        dom.sheetBody = $('#sheet-body');
+        dom.sheetBackdrop = $('#sheet-backdrop');
+        dom.sheetGrab = $('#sheet-grab');
     }
 
     function fillFontSelect() {
@@ -1181,10 +1301,21 @@
     }
 
     function bindForm() {
-        setupPickers();
+        setupPhotoInputs();
         setupDragAndDrop();
 
         $('#clear-photos').addEventListener('click', clearPhotos);
+
+        $('#wm-pick').addEventListener('click', function () { $('#wm-input').click(); });
+        $('#wm-input').addEventListener('change', function () {
+            pickWatermarkImage(this.files && this.files[0]);
+            this.value = '';
+        });
+        $('#wm-image-clear').addEventListener('click', clearWatermarkImage);
+
+        document.querySelectorAll('.seg').forEach(function (seg) {
+            seg.addEventListener('click', function () { setWatermarkType(seg.dataset.wm); });
+        });
 
         bindValue('#wm-text', 'text');
         bindValue('#wm-color', 'color');
@@ -1230,10 +1361,11 @@
             button.addEventListener('click', function () {
                 if (state.sheet === button.dataset.sheet) closeSheet();
                 else openSheet(button.dataset.sheet);
+                buzz(6);
             });
         });
 
-        $('#sheet-backdrop').addEventListener('click', closeSheet);
+        dom.sheetBackdrop.addEventListener('click', closeSheet);
         $('#sheet-close').addEventListener('click', closeSheet);
         setupSheetDrag();
 
@@ -1253,7 +1385,13 @@
         applySettingsToForm();
         bindForm();
         setupCanvasInteractions();
+        setupKeyboard();
 
+        mq = global.matchMedia(MOBILE_QUERY);
+        if (mq.addEventListener) mq.addEventListener('change', applyLayout);
+        else if (mq.addListener) mq.addListener(applyLayout);   // navegadores antiguos
+
+        applyLayout();
         renderPhotos();
         renderResults();
         drawPreview();
