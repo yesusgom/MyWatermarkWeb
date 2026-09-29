@@ -1,20 +1,30 @@
 {
   "name": "Marca de Agua",
   "short_name": "Marca Agua",
-  "description": "Añade una marca de agua a tus fotos sin salir del teléfono. Todo local, sin servidor.",
+  "description": "Añade una marca de agua a tus fotos desde el móvil, la tableta o el ordenador. Todo local, sin servidor.",
   "lang": "es",
+  "dir": "ltr",
+  "id": "./",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "orientation": "any",
   "background_color": "#0e1117",
   "theme_color": "#0e1117",
+  "categories": ["photo", "graphics", "utilities"],
   "icons": [
     {
       "src": "icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }

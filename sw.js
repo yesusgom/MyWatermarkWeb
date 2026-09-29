@@ -4,13 +4,14 @@
    copia de los ficheros para que abra al instante y siga
    funcionando sin cobertura. Se registra solo en http(s).
    ============================================================= */
-var CACHE = 'marca-agua-movil-v2';
+var CACHE = 'marca-agua-v3';
 
 var ASSETS = [
     './',
     './index.html',
     './manifest.webmanifest',
     './icon.svg',
+    './icon-maskable.svg',
     './css/styles.css',
     './js/utils.js',
     './js/zip.js',

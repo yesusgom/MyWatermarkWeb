@@ -1,18 +1,15 @@
 /* =============================================================
- * app.js — lógica de la aplicación (adaptativa)
+ * app.js — interfaz adaptable
  *
- * Un solo código para móvil, tableta y escritorio. Lo único que
- * cambia según la pantalla es DÓNDE viven los ajustes:
+ * La misma web sirve en teléfono, tableta y escritorio. El punto
+ * de partida es el móvil (una columna, hojas deslizantes, tira de
+ * fotos, cámara, vibración) y a partir de ahí el CSS y estas pocas
+ * medidas se adaptan al sitio: lienzo grande con panel lateral en
+ * pantallas anchas, barra compacta en horizontal, resolución de la
+ * vista previa según la memoria del dispositivo.
  *
- *   · ≥ 861 px  → los ajustes se quedan en la barra lateral
- *   · ≤ 860 px  → los ajustes se mueven a una hoja deslizable y
- *                 aparece una barra inferior con 4 accesos
- *
- * Para eso se mueve el bloque #controls de sitio con
- * appendChild; todo el resto del código es idéntico en ambos casos.
- *
- * Privacidad: no hay red. Las fotos se leen del disco con
- * createImageBitmap y se guardan con object URLs.
+ * Reglas de privacidad: no hay red. Las fotos se leen del disco
+ * con createImageBitmap y se guardan con object URLs.
  * ============================================================= */
 (function (global) {
     'use strict';
@@ -24,17 +21,28 @@
     var $ = utils.$;
     var clamp = utils.clamp;
 
-    var STORAGE_KEY = 'wm.settings.v1';
-    var MOBILE_QUERY = '(max-width: 860px)';
-    var MAX_PHOTOS = 200;
-    var PREVIEW_MAX_WIDTH_DESKTOP = 1500;
-    var PREVIEW_MAX_WIDTH_MOBILE = 1000;
-    var BIG_FILE = 24 * 1024 * 1024;
-    var ZIP_WARN_BYTES = 1024 * 1024 * 1024;
+    var STORAGE_KEY = 'wm.settings.v2';   // distinto del de escritorio: ajustes propios
+    var MAX_PHOTOS = 100;
+    var BIG_FILE = 24 * 1024 * 1024;      // avisar a partir de 24 MB
+    var ZIP_WARN_BYTES = 700 * 1024 * 1024;
+
+    /**
+     * Ancho máximo de la vista previa, según el dispositivo: en un
+     * teléfono prima la memoria, en un escritorio grande hay sitio
+     * para más detalle. Se consulta cada vez que se carga una foto,
+     * así que al girar la pantalla se nota el cambio.
+     */
+    function previewMaxWidth() {
+        if (!global.matchMedia) return 1000;
+        var roomy = global.matchMedia('(min-width: 900px)').matches;
+        var touch = global.matchMedia('(pointer: coarse)').matches;
+        if (roomy && !touch) return 1800;    // escritorio con ratón
+        return touch ? 700 : 1100;          // móvil o tableta táctil
+    }
 
     var DEFAULTS = {
         wmType: 'image',
-        text: '© Mi marca de agua',
+        text: '© Mi marca',
         font: renderer.FONTS[0].value,
         color: '#ffffff',
         strokeColor: '#000000',
@@ -48,9 +56,9 @@
         repeat: false,
         gapPct: 8,
         format: 'image/jpeg',
-        quality: 90,
+        quality: 88,
         background: '#ffffff',
-        maxWidth: 0,
+        maxWidth: 1600,
         prefix: 'wm_',
         suffix: '',
         anchorX: 0.5,
@@ -75,19 +83,10 @@
         busy: false,
         cancelRequested: false,
         sheet: null,
-        mobile: false,
         settings: loadSettings()
     };
 
     var dom = {};
-    var mq = null;
-
-    var SHEET_TITLES = {
-        photos: 'Fotos',
-        mark: 'Marca de agua',
-        place: 'Colocación',
-        output: 'Salida'
-    };
 
     /* =============================================================
      * Ajustes
@@ -117,7 +116,7 @@
     }, 250);
 
     /* =============================================================
-     * MARCA DE AGUA
+     * Posición: una para todas o una por foto
      * ============================================================= */
 
     function photoKey(photo) {
@@ -170,6 +169,10 @@
         toast('Posición copiada a ' + copied + ' foto' + (copied === 1 ? '' : 's') + '.', 'ok');
     }
 
+    /* =============================================================
+     * Marca de agua
+     * ============================================================= */
+
     function textSource(settings) {
         var s = settings || state.settings;
         if (!s.text || !s.text.trim()) return null;
@@ -209,6 +212,7 @@
         };
     }
 
+    /** Copia los ajustes para que el lote use siempre los mismos valores. */
     function buildPlan() {
         var snapshot = {};
         Object.keys(DEFAULTS).forEach(function (key) { snapshot[key] = state.settings[key]; });
@@ -226,7 +230,7 @@
     }
 
     /* =============================================================
-     * AVISOS
+     * Avisos, vibración y progreso
      * ============================================================= */
 
     function toast(message, kind) {
@@ -238,13 +242,11 @@
             node.style.opacity = '0';
             node.style.transition = 'opacity .25s';
             setTimeout(function () { if (node.parentNode) node.remove(); }, 260);
-        }, kind === 'err' ? 6500 : 3800);
+        }, kind === 'err' ? 6000 : 3600);
     }
 
     function buzz(ms) {
-        if (state.mobile && navigator.vibrate) {
-            try { navigator.vibrate(ms); } catch (e) { /* no soportado */ }
-        }
+        if (navigator.vibrate) { try { navigator.vibrate(ms); } catch (e) { /* no soportado */ } }
     }
 
     function setProgress(ratio) {
@@ -263,13 +265,13 @@
     function setStatus(text) { $('#status').textContent = text; }
 
     /* =============================================================
-     * FOTOS
+     * Fotos
      * ============================================================= */
 
     function isImageFile(file) {
         if (!file) return false;
         if (file.type && file.type.indexOf('image/') === 0) return true;
-        return /\.(jpe?g|png|webp|gif|bmp|avif|svg)$/i.test(file.name || '');
+        return /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif)$/i.test(file.name || '');
     }
 
     function addFiles(fileList) {
@@ -278,7 +280,7 @@
 
         var files = all.filter(isImageFile);
         if (!files.length) {
-            toast('No se ha encontrado ninguna imagen compatible.', 'warn');
+            toast('Ninguno de esos archivos es una imagen.', 'warn');
             return;
         }
 
@@ -292,7 +294,7 @@
                 break;
             }
             var file = files[i];
-            if (state.mobile && file.size > BIG_FILE) big++;
+            if (file.size > BIG_FILE) big++;
             state.photos.push({
                 id: utils.nextId(),
                 file: file,
@@ -312,11 +314,13 @@
         renderPhotos();
         ensurePreview();
         updateUI();
-        closeSheet();
-        buzz(12);
 
-        if (big) toast(big + ' foto(s) son muy grandes: puede ir lento el móvil.', 'warn');
-        else if (added > 1) toast(added + ' fotos cargadas.', 'ok');
+        if (big) {
+            toast(big + ' foto(s) son muy grandes: puede ir lento el móvil.', 'warn');
+        } else if (added > 1) {
+            toast(added + ' fotos cargadas.', 'ok');
+        }
+        buzz(12);
     }
 
     function removePhoto(id) {
@@ -362,8 +366,8 @@
         renderPhotos();
         ensurePreview();
         updateUI();
-
-        var active = $('#filmstrip .film.is-active');
+        var strip = $('#filmstrip');
+        var active = strip.querySelector('.film.is-active');
         if (active && active.scrollIntoView) {
             active.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
         }
@@ -378,7 +382,7 @@
         state.photos.forEach(function (photo, index) {
             var isActive = index === state.selected;
 
-            /* --- Elemento de la lista de fotos --- */
+            // --- Item de la hoja ---
             var item = utils.el('li', 'thumb' + (isActive ? ' is-active' : '') + (photo.error ? ' is-error' : ''));
             item.tabIndex = 0;
             item.setAttribute('role', 'button');
@@ -392,17 +396,17 @@
             var nameRow = utils.el('div', 'thumb__nameRow');
             nameRow.appendChild(utils.el('span', 'thumb__name', photo.name));
             if (hasOwnPlacement(photo)) {
-                var flag = utils.el('span', 'thumb__flag', 'posición propia');
-                flag.title = 'Esta foto tiene su propia posición de marca de agua';
+                var flag = utils.el('span', 'thumb__flag', 'propia');
+                flag.title = 'Esta foto tiene su propia posición';
                 nameRow.appendChild(flag);
             }
             body.appendChild(nameRow);
             body.appendChild(utils.el('span', 'thumb__meta',
                 photo.error ? photo.error : utils.formatBytes(photo.size)));
 
-            var remove = utils.el('button', 'icon-btn', '×');
+            var remove = utils.el('button', 'icon-btn icon-btn--del', '×');
             remove.type = 'button';
-            remove.title = 'Quitar esta foto';
+            remove.title = 'Quitar';
             remove.setAttribute('aria-label', 'Quitar ' + photo.name);
             remove.addEventListener('click', function (event) {
                 event.stopPropagation();
@@ -414,22 +418,15 @@
             item.appendChild(remove);
             item.addEventListener('click', function () {
                 selectPhoto(index);
-                if (state.mobile) closeSheet();
-            });
-            item.addEventListener('keydown', function (event) {
-                if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    selectPhoto(index);
-                }
+                closeSheet();
             });
             list.appendChild(item);
 
-            /* --- Foto de la tira inferior (solo se ve en móvil) --- */
+            // --- Foto de la tira inferior ---
             var film = utils.el('button', 'film' + (isActive ? ' is-active' : '') + (photo.error ? ' is-error' : ''));
             film.type = 'button';
             film.title = photo.name;
             film.setAttribute('aria-label', 'Foto ' + (index + 1) + ': ' + photo.name);
-
             var filmImg = document.createElement('img');
             filmImg.src = photo.url;
             filmImg.alt = '';
@@ -444,18 +441,12 @@
         var count = state.photos.length;
         $('#photo-count').textContent = count === 1 ? '1 foto' : count + ' fotos';
         $('#dock-count').textContent = count ? String(count) : '';
+        $('#dock-count').dataset.zero = count ? '0' : '1';
         $('#clear-photos').disabled = count === 0;
-
-        var empty = $('#stage-empty');
-        if (empty) {
-            empty.innerHTML = count
-                ? 'Selecciona una foto para ver la marca.'
-                : 'Añade al menos una foto para empezar.<br>Tienes <strong>0 fotos</strong> ahora mismo.';
-        }
     }
 
     /* =============================================================
-     * VISTA PREVIA
+     * Vista previa
      * ============================================================= */
 
     function ensurePreview() {
@@ -481,9 +472,7 @@
                 return;
             }
             utils.closeQuietly(state.preview);
-            state.preview = utils.shrink(bitmap, state.mobile
-                ? PREVIEW_MAX_WIDTH_MOBILE
-                : PREVIEW_MAX_WIDTH_DESKTOP);
+            state.preview = utils.shrink(bitmap, previewMaxWidth());
             drawPreview();
         }).catch(function (error) {
             console.error(error);
@@ -569,7 +558,7 @@
             var point = canvasPoint(event);
             if (!renderer.hitTest(point, state.previewInfo, drawOptions())) return;
 
-            event.preventDefault();
+            event.preventDefault();          // evita que la página scrollee
             state.dragging = true;
             state.dragOffset = {
                 x: point.x - state.previewInfo.place.cx,
@@ -607,47 +596,8 @@
         canvas.addEventListener('pointercancel', endDrag);
     }
 
-    function setupKeyboard() {
-        document.addEventListener('keydown', function (event) {
-            var target = event.target;
-            var tag = (target && target.tagName) || '';
-            if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (target && target.isContentEditable)) return;
-            if (state.busy || state.mobile) return;      // en móvil no hay teclado físico
-
-            var step = event.shiftKey ? 0.05 : 0.01;
-            var anchor = currentAnchor();
-            var handled = true;
-
-            switch (event.key) {
-                case 'ArrowLeft':  setAnchor(anchor.x - step, anchor.y); break;
-                case 'ArrowRight': setAnchor(anchor.x + step, anchor.y); break;
-                case 'ArrowUp':    setAnchor(anchor.x, anchor.y - step); break;
-                case 'ArrowDown':  setAnchor(anchor.x, anchor.y + step); break;
-                case '+': case '=':
-                    state.settings.sizePct = clamp(Number(state.settings.sizePct) + 1, 2, 100); break;
-                case '-': case '_':
-                    state.settings.sizePct = clamp(Number(state.settings.sizePct) - 1, 2, 100); break;
-                case 'r': case 'R':
-                    state.settings.rotation = Number(state.settings.rotation) + 5 > 180
-                        ? -180
-                        : Number(state.settings.rotation) + 5;
-                    break;
-                case '0':
-                    setAnchor(0.5, 0.5);
-                    break;
-                default: handled = false;
-            }
-
-            if (handled) {
-                event.preventDefault();
-                redraw();
-                updateUI();
-            }
-        });
-    }
-
     /* =============================================================
-     * PROCESADO
+     * Procesado
      * ============================================================= */
 
     function buildName(photo, settings, mime) {
@@ -775,25 +725,23 @@
             setProgress(null);
             updateUI();
             switchTab('results');
-            buzz([12, 40, 12]);
 
             var seconds = ((Date.now() - started) / 1000).toFixed(1);
+            buzz([12, 40, 12]);
             if (state.cancelRequested) {
                 toast('Cancelado (' + done + '/' + total + ').', 'warn');
             } else if (failed) {
-                toast('Terminado: ' + done + ' bien y ' + failed + ' con error.', 'warn');
+                toast(done + ' bien y ' + failed + ' con error.', 'warn');
             } else {
-                toast(done + ' imagen' + (done === 1 ? '' : 'es') + ' lista' +
+                toast(done + ' foto' + (done === 1 ? '' : 's') + ' lista' +
                     (done === 1 ? '' : 's') + ' en ' + seconds + ' s.', 'ok');
             }
-            if (fallbackFormat) {
-                toast('Tu navegador no codifica en ese formato: se ha guardado en PNG.', 'warn');
-            }
+            if (fallbackFormat) toast('Tu navegador no codifica WebP: se ha guardado en PNG.', 'warn');
         });
     }
 
     /* =============================================================
-     * RESULTADOS Y DESCARGAS
+     * Resultados, descarga y compartir
      * ============================================================= */
 
     function renderResults() {
@@ -836,17 +784,14 @@
         var totalBytes = state.results.reduce(function (sum, r) { return sum + r.blob.size; }, 0);
         $('#results-head').textContent = state.results.length
             ? state.results.length + ' imagen' + (state.results.length === 1 ? '' : 'es') +
-              ' preparada' + (state.results.length === 1 ? '' : 's') +
-              ' · ' + utils.formatBytes(totalBytes) + ' en total'
+              ' · ' + utils.formatBytes(totalBytes)
             : '';
 
         $('#results-empty').classList.toggle('is-hidden', state.results.length > 0);
         $('#result-count').textContent = String(state.results.length);
         $('#btn-clear-results').disabled = state.results.length === 0;
         $('#btn-download-all').hidden = state.results.length === 0;
-        $('#btn-share').hidden = state.results.length === 0 ||
-            !state.results.length ||
-            !(navigator.canShare && navigator.share);
+        $('#btn-share').hidden = state.results.length === 0;
     }
 
     function clearResults(notify) {
@@ -866,13 +811,13 @@
 
         var totalBytes = state.results.reduce(function (sum, r) { return sum + r.blob.size; }, 0);
         if (totalBytes > ZIP_WARN_BYTES) {
-            toast('El paquete supera 1 GB: puede que el navegador se quede sin memoria. ' +
-                  'Prueba a descargarlas por partes.', 'warn');
+            toast('El paquete es muy grande: puede que el móvil se quede sin memoria. ' +
+                  'Guárdalas por partes.', 'warn');
         }
 
         state.busy = true;
         updateUI();
-        setStatus('Empaquetando ' + state.results.length + ' imágenes…');
+        setStatus('Empaquetando…');
         setProgress(0);
 
         var files = [];
@@ -893,7 +838,7 @@
             setProgress(1);
             var blob = zip.create(files);
             utils.download(blob, 'marca-agua-' + utils.stamp() + '.zip');
-            toast('ZIP creado (' + utils.formatBytes(blob.size) + ').', 'ok');
+            toast('ZIP listo (' + utils.formatBytes(blob.size) + ').', 'ok');
         }).catch(function (error) {
             console.error(error);
             toast('No se ha podido crear el ZIP: ' + error.message, 'err');
@@ -904,6 +849,7 @@
         });
     }
 
+    /** Comparte los resultados con WhatsApp, correo, etc. (si el móvil lo permite). */
     function shareResults() {
         if (!state.results.length) return;
 
@@ -916,15 +862,17 @@
             return;
         }
 
-        navigator.share({ files: files, title: 'Fotos con marca de agua' })
-            .catch(function (error) {
-                if (error && error.name === 'AbortError') return;
-                toast('No se ha podido compartir.', 'err');
-            });
+        navigator.share({
+            files: files,
+            title: 'Fotos con marca de agua'
+        }).catch(function (error) {
+            if (error && error.name === 'AbortError') return;   // el usuario canceló
+            toast('No se ha podido compartir.', 'err');
+        });
     }
 
     /* =============================================================
-     * ESTADO DE LA INTERFAZ
+     * Interfaz
      * ============================================================= */
 
     function canApply() {
@@ -944,7 +892,7 @@
         $('#wm-rotation').value = s.rotation;
         $('#wm-margin').value = s.marginPct;
         $('#wm-gap').value = s.gapPct;
-        $('#out-size').textContent = s.sizePct + ' % del ancho';
+        $('#out-size').textContent = s.sizePct + ' %';
         $('#out-opacity').textContent = s.opacity + ' %';
         $('#out-rotation').textContent = s.rotation + '°';
         $('#out-margin').textContent = s.marginPct + ' %';
@@ -961,27 +909,24 @@
         $('#btn-copy-placement').classList.toggle('is-hidden', s.linked !== false);
         $('#placement-hint').textContent = s.linked
             ? 'Mueve la marca en cualquier foto: se aplicará igual en todas.'
-            : (state.mobile
-                ? 'Cada foto guarda su posición. Usa la tira de abajo para saltar de una a otra.'
-                : 'Cada foto guarda su propia posición; las demás quedan donde estaban.');
+            : 'Cada foto guarda su posición. Usa la tira de abajo para saltar de una a otra.';
 
         var photo = state.photos[state.selected];
         $('#preview-hint').textContent = photo
             ? 'Foto ' + (state.selected + 1) + ' de ' + state.photos.length +
               (s.linked ? '' : ' · posición propia') +
-              (state.mobile ? ' · arrastra la marca con el dedo' : '')
+              ' · arrastra la marca con el dedo'
             : '';
 
         if (state.busy) return;
 
         if (!state.photos.length) {
-            setStatus(state.mobile ? 'Toca «Fotos» para elegir imágenes' : 'Sin fotos: empieza arrastrando imágenes al panel.');
+            setStatus('Toca «Fotos» para elegir imágenes');
         } else if (!currentWatermarkSource()) {
-            setStatus('Falta la marca de agua: elige una imagen o escribe un texto.');
+            setStatus('Falta la marca de agua: ve a «Marca»');
         } else {
             setStatus(state.photos.length + ' foto' + (state.photos.length === 1 ? '' : 's') +
-                ' lista' + (state.photos.length === 1 ? '' : 's') +
-                ' · la marca ocupará el ' + s.sizePct + ' % del ancho');
+                ' · marca del ' + s.sizePct + ' % del ancho');
         }
     }
 
@@ -1014,72 +959,40 @@
     }
 
     /* =============================================================
-     * ADAPTACIÓN A LA PANTALLA
-     *
-     * La clave de todo: el bloque #controls se traslada a la hoja
-     * deslizable en móvil y vuelve a la barra lateral en escritorio.
+     * Hojas deslizantes
      * ============================================================= */
 
-    function applyLayout() {
-        var mobile = !!mq.matches;
-        if (mobile === state.mobile && dom.controls.parentNode === (mobile ? dom.sheetBody : dom.sidebar)) return;
-        state.mobile = mobile;
-
-        document.body.classList.toggle('is-mobile', mobile);
-
-        if (mobile) {
-            dom.sheetBody.appendChild(dom.controls);
-            // Dentro de la hoja solo se ve el bloque elegido
-            showSheetBlock(state.sheet || 'photos');
-        } else {
-            closeSheet();
-            dom.sidebar.appendChild(dom.controls);
-            dom.sheet.classList.add('is-hidden');
-            dom.sheetBackdrop.classList.add('is-hidden');
-        }
-
-        // El lienzo cambia de tamaño: hay que reescalar la vista previa
-        if (state.previewPhotoId) {
-            state.previewPhotoId = null;   // fuerza recargar/reducir la imagen
-            ensurePreview();
-        } else {
-            drawPreview();
-        }
-
-        renderPhotos();
-        updateUI();
-    }
-
-    function showSheetBlock(name) {
-        var cards = dom.controls.querySelectorAll('.card');
-        Array.prototype.forEach.call(cards, function (card) {
-            card.style.display = (card.dataset.sheet === name) ? '' : 'none';
-        });
-    }
+    var SHEET_TITLES = {
+        photos: 'Fotos',
+        mark: 'Marca de agua',
+        place: 'Colocación',
+        output: 'Salida'
+    };
 
     function openSheet(name) {
-        if (!state.mobile || !SHEET_TITLES[name]) return;
+        if (!SHEET_TITLES[name]) return;
         state.sheet = name;
         $('#sheet-title').textContent = SHEET_TITLES[name];
-        showSheetBlock(name);
-        dom.sheet.classList.remove('is-hidden');
-        dom.sheetBackdrop.classList.remove('is-hidden');
+        dom.sheetPanes.forEach(function (pane) {
+            pane.classList.toggle('is-hidden', pane.dataset.sheet !== name);
+        });
+        $('#sheet').classList.remove('is-hidden');
+        $('#sheet-backdrop').classList.remove('is-hidden');
+        document.body.classList.add('sheet-open');
     }
 
     function closeSheet() {
-        if (!state.sheet) {
-            dom.sheet.classList.add('is-hidden');
-            dom.sheetBackdrop.classList.add('is-hidden');
-            return;
-        }
+        if (!state.sheet) return;
         state.sheet = null;
-        dom.sheet.classList.add('is-hidden');
-        dom.sheetBackdrop.classList.add('is-hidden');
+        $('#sheet').classList.add('is-hidden');
+        $('#sheet-backdrop').classList.add('is-hidden');
+        document.body.classList.remove('sheet-open');
     }
 
+    /** Cierra la hoja arrastrando el tirador superior. */
     function setupSheetDrag() {
-        var sheet = dom.sheet;
-        var grab = dom.sheetGrab;
+        var sheet = $('#sheet');
+        var grab = $('#sheet-grab');
         var startY = 0;
         var dragging = false;
 
@@ -1111,8 +1024,47 @@
         grab.addEventListener('pointercancel', end);
     }
 
+    /**
+     * Al cambiar el tamaño de la ventana —o al girar el teléfono— la
+     * rejilla se reorganiza: hay que redibujar el lienzo para que la
+     * marca siga donde toca y el arrastre use las medidas nuevas.
+     */
+    function setupViewportWatch() {
+        var redrawSoon = utils.debounce(function () {
+            drawPreview();
+            saveSettings();
+        }, 160);
+
+        global.addEventListener('resize', redrawSoon);
+        global.addEventListener('orientationchange', redrawSoon);
+
+        // Al abrir el teclado en el móvil la ventana "visible" cambia
+        if (global.visualViewport) {
+            global.visualViewport.addEventListener('resize', redrawSoon);
+        }
+    }
+
+    /** Atajos de teclado para cuando se usa con ratón: Esc y Ctrl+Enter. */
+    function setupKeyboard() {
+        global.addEventListener('keydown', function (event) {
+            if (event.key === 'Escape' && state.sheet) {
+                closeSheet();
+                return;
+            }
+
+            var tag = (event.target && event.target.tagName) || '';
+            var typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+            if (typing || state.sheet) return;
+
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && canApply()) {
+                event.preventDefault();
+                applyWatermark();
+            }
+        });
+    }
+
     /* =============================================================
-     * ENLAZADO DE EVENTOS
+     * Eventos
      * ============================================================= */
 
     function bindValue(id, key, cast) {
@@ -1164,7 +1116,7 @@
             toast('Marca de agua cargada.', 'ok');
         }).catch(function (error) {
             console.error(error);
-            toast('No se ha podido cargar esa imagen: ' + error.message, 'err');
+            toast('No se ha podido cargar: ' + error.message, 'err');
         });
     }
 
@@ -1184,36 +1136,28 @@
         updateUI();
     }
 
-    function setupPhotoInputs() {
+    function setupPickers() {
         $('#photo-pick').addEventListener('click', function () { $('#photo-input').click(); });
         $('#photo-pick-cam').addEventListener('click', function () { $('#cam-input').click(); });
-        $('#dropzone').addEventListener('click', function () { $('#photo-input').click(); });
-        $('#dropzone').addEventListener('keydown', function (event) {
-            if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                $('#photo-input').click();
-            }
-        });
-        $('#dropzone').addEventListener('dragover', function (event) {
-            event.preventDefault();
-            $('#dropzone').classList.add('is-over');
-        });
-        $('#dropzone').addEventListener('dragleave', function () {
-            $('#dropzone').classList.remove('is-over');
-        });
-        $('#dropzone').addEventListener('drop', function (event) {
-            event.preventDefault();
-            event.stopPropagation();
-            $('#dropzone').classList.remove('is-over');
-            addFiles(event.dataTransfer.files);
-        });
 
         ['#photo-input', '#cam-input'].forEach(function (sel) {
             var input = $(sel);
             input.addEventListener('change', function () {
                 addFiles(input.files);
                 input.value = '';
+                closeSheet();
             });
+        });
+
+        $('#wm-pick').addEventListener('click', function () { $('#wm-input').click(); });
+        $('#wm-input').addEventListener('change', function () {
+            pickWatermarkImage(this.files && this.files[0]);
+            this.value = '';
+        });
+        $('#wm-image-clear').addEventListener('click', clearWatermarkImage);
+
+        document.querySelectorAll('.seg').forEach(function (seg) {
+            seg.addEventListener('click', function () { setWatermarkType(seg.dataset.wm); });
         });
     }
 
@@ -1225,11 +1169,6 @@
             var types = event.dataTransfer ? Array.prototype.slice.call(event.dataTransfer.types || []) : [];
             if (types.indexOf('Files') < 0) return;
             event.preventDefault();
-            if (event.target && event.target.closest && event.target.closest('#dropzone')) {
-                depth = 0;
-                overlay.classList.add('is-hidden');
-                return;
-            }
             depth++;
             overlay.classList.remove('is-hidden');
         });
@@ -1254,12 +1193,7 @@
         dom.tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
         dom.panes = Array.prototype.slice.call(document.querySelectorAll('.tab-pane'));
         dom.posButtons = Array.prototype.slice.call(document.querySelectorAll('.pos'));
-        dom.controls = $('#controls');
-        dom.sidebar = $('#sidebar');
-        dom.sheet = $('#sheet');
-        dom.sheetBody = $('#sheet-body');
-        dom.sheetBackdrop = $('#sheet-backdrop');
-        dom.sheetGrab = $('#sheet-grab');
+        dom.sheetPanes = Array.prototype.slice.call(document.querySelectorAll('.sheet-pane'));
     }
 
     function fillFontSelect() {
@@ -1301,21 +1235,10 @@
     }
 
     function bindForm() {
-        setupPhotoInputs();
+        setupPickers();
         setupDragAndDrop();
 
         $('#clear-photos').addEventListener('click', clearPhotos);
-
-        $('#wm-pick').addEventListener('click', function () { $('#wm-input').click(); });
-        $('#wm-input').addEventListener('change', function () {
-            pickWatermarkImage(this.files && this.files[0]);
-            this.value = '';
-        });
-        $('#wm-image-clear').addEventListener('click', clearWatermarkImage);
-
-        document.querySelectorAll('.seg').forEach(function (seg) {
-            seg.addEventListener('click', function () { setWatermarkType(seg.dataset.wm); });
-        });
 
         bindValue('#wm-text', 'text');
         bindValue('#wm-color', 'color');
@@ -1361,11 +1284,10 @@
             button.addEventListener('click', function () {
                 if (state.sheet === button.dataset.sheet) closeSheet();
                 else openSheet(button.dataset.sheet);
-                buzz(6);
             });
         });
 
-        dom.sheetBackdrop.addEventListener('click', closeSheet);
+        $('#sheet-backdrop').addEventListener('click', closeSheet);
         $('#sheet-close').addEventListener('click', closeSheet);
         setupSheetDrag();
 
@@ -1385,13 +1307,9 @@
         applySettingsToForm();
         bindForm();
         setupCanvasInteractions();
+        setupViewportWatch();
         setupKeyboard();
 
-        mq = global.matchMedia(MOBILE_QUERY);
-        if (mq.addEventListener) mq.addEventListener('change', applyLayout);
-        else if (mq.addListener) mq.addListener(applyLayout);   // navegadores antiguos
-
-        applyLayout();
         renderPhotos();
         renderResults();
         drawPreview();
