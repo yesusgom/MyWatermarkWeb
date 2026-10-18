@@ -22,9 +22,12 @@
     var clamp = utils.clamp;
 
     var STORAGE_KEY = 'wm.settings.v2';   // distinto del de escritorio: ajustes propios
-    var MAX_PHOTOS = 100;
+    var MAX_PHOTOS = 1000;
     var BIG_FILE = 24 * 1024 * 1024;      // avisar a partir de 24 MB
     var ZIP_WARN_BYTES = 700 * 1024 * 1024;
+    var FILMSTRIP_LIMIT = 20;             // a partir de aquí se oculta la tira
+    var THUMB_LIST_LIMIT = 30;            // a partir de aquí se simplifica la lista
+    var RESULTS_PAGE = 60;                // tarjetas por página en resultados
 
     /**
      * Ancho máximo de la vista previa, según el dispositivo: en un
@@ -83,6 +86,7 @@
         busy: false,
         cancelRequested: false,
         sheet: null,
+        resultsPage: 1,
         settings: loadSettings()
     };
 
@@ -284,6 +288,9 @@
             return;
         }
 
+        // Si se cargan fotos nuevas, los resultados viejos ya no aplican
+        clearResults(false);
+
         var hadPhotos = state.photos.length > 0;
         var added = 0;
         var big = 0;
@@ -355,6 +362,7 @@
         state.previewPhotoId = null;
         utils.closeQuietly(state.preview);
         state.preview = null;
+        clearResults(false);
         renderPhotos();
         drawPreview();
         updateUI();
@@ -379,66 +387,112 @@
         list.textContent = '';
         strip.textContent = '';
 
-        state.photos.forEach(function (photo, index) {
-            var isActive = index === state.selected;
-
-            // --- Item de la hoja ---
-            var item = utils.el('li', 'thumb' + (isActive ? ' is-active' : '') + (photo.error ? ' is-error' : ''));
-            item.tabIndex = 0;
-            item.setAttribute('role', 'button');
-
-            var img = utils.el('img', 'thumb__img');
-            img.src = photo.url;
-            img.alt = photo.name;
-            img.loading = 'lazy';
-
-            var body = utils.el('div', 'thumb__body');
-            var nameRow = utils.el('div', 'thumb__nameRow');
-            nameRow.appendChild(utils.el('span', 'thumb__name', photo.name));
-            if (hasOwnPlacement(photo)) {
-                var flag = utils.el('span', 'thumb__flag', 'propia');
-                flag.title = 'Esta foto tiene su propia posición';
-                nameRow.appendChild(flag);
-            }
-            body.appendChild(nameRow);
-            body.appendChild(utils.el('span', 'thumb__meta',
-                photo.error ? photo.error : utils.formatBytes(photo.size)));
-
-            var remove = utils.el('button', 'icon-btn icon-btn--del', '×');
-            remove.type = 'button';
-            remove.title = 'Quitar';
-            remove.setAttribute('aria-label', 'Quitar ' + photo.name);
-            remove.addEventListener('click', function (event) {
-                event.stopPropagation();
-                removePhoto(photo.id);
-            });
-
-            item.appendChild(img);
-            item.appendChild(body);
-            item.appendChild(remove);
-            item.addEventListener('click', function () {
-                selectPhoto(index);
-                closeSheet();
-            });
-            list.appendChild(item);
-
-            // --- Foto de la tira inferior ---
-            var film = utils.el('button', 'film' + (isActive ? ' is-active' : '') + (photo.error ? ' is-error' : ''));
-            film.type = 'button';
-            film.title = photo.name;
-            film.setAttribute('aria-label', 'Foto ' + (index + 1) + ': ' + photo.name);
-            var filmImg = document.createElement('img');
-            filmImg.src = photo.url;
-            filmImg.alt = '';
-            filmImg.loading = 'lazy';
-            film.appendChild(filmImg);
-            film.appendChild(utils.el('span', 'film__n', String(index + 1)));
-            if (hasOwnPlacement(photo)) film.appendChild(utils.el('span', 'film__dot'));
-            film.addEventListener('click', function () { selectPhoto(index); });
-            strip.appendChild(film);
-        });
-
         var count = state.photos.length;
+
+        // Con muchas fotos, la tira inferior se oculta y la lista se
+        // simplifica: crear 1000 <li> con <img> saturaría el DOM.
+        if (count > FILMSTRIP_LIMIT) {
+            strip.classList.add('is-hidden');
+        } else {
+            strip.classList.remove('is-hidden');
+            for (var i = 0; i < count; i++) {
+                var film = utils.el('button', 'film' + (i === state.selected ? ' is-active' : '') + (state.photos[i].error ? ' is-error' : ''));
+                film.type = 'button';
+                film.title = state.photos[i].name;
+                film.setAttribute('aria-label', 'Foto ' + (i + 1) + ': ' + state.photos[i].name);
+                var filmImg = document.createElement('img');
+                filmImg.src = state.photos[i].url;
+                filmImg.alt = '';
+                filmImg.loading = 'lazy';
+                film.appendChild(filmImg);
+                film.appendChild(utils.el('span', 'film__n', String(i + 1)));
+                if (hasOwnPlacement(state.photos[i])) film.appendChild(utils.el('span', 'film__dot'));
+                (function (index) {
+                    film.addEventListener('click', function () { selectPhoto(index); });
+                })(i);
+                strip.appendChild(film);
+            }
+        }
+
+        // En la hoja: si hay muchas fotos, mostrar navegación compacta
+        // en lugar de una lista interminable de miniaturas.
+        if (count > THUMB_LIST_LIMIT) {
+            var nav = utils.el('li', 'thumb-nav');
+            nav.setAttribute('aria-label', 'Navegación rápida de fotos');
+
+            var photo = state.photos[state.selected];
+
+            var info = utils.el('div', 'thumb-nav__info');
+            info.appendChild(utils.el('span', 'thumb-nav__num', 'Foto ' + (state.selected + 1) + ' de ' + count));
+            info.appendChild(utils.el('span', 'thumb-nav__name', photo ? photo.name : '—'));
+
+            var controls = utils.el('div', 'thumb-nav__controls');
+            var prevBtn = utils.el('button', 'btn btn--sm btn--ghost', '← Anterior');
+            prevBtn.type = 'button';
+            prevBtn.disabled = state.selected <= 0;
+            prevBtn.addEventListener('click', function () {
+                if (state.selected > 0) selectPhoto(state.selected - 1);
+            });
+            var nextBtn = utils.el('button', 'btn btn--sm btn--ghost', 'Siguiente →');
+            nextBtn.type = 'button';
+            nextBtn.disabled = state.selected >= count - 1;
+            nextBtn.addEventListener('click', function () {
+                if (state.selected < count - 1) selectPhoto(state.selected + 1);
+            });
+            controls.appendChild(prevBtn);
+            controls.appendChild(nextBtn);
+
+            nav.appendChild(info);
+            nav.appendChild(controls);
+            list.appendChild(nav);
+        } else {
+            for (var i = 0; i < count; i++) {
+                (function (index) {
+                    var photo = state.photos[index];
+                    var isActive = index === state.selected;
+
+                    var item = utils.el('li', 'thumb' + (isActive ? ' is-active' : '') + (photo.error ? ' is-error' : ''));
+                    item.tabIndex = 0;
+                    item.setAttribute('role', 'button');
+
+                    var img = utils.el('img', 'thumb__img');
+                    img.src = photo.url;
+                    img.alt = photo.name;
+                    img.loading = 'lazy';
+
+                    var body = utils.el('div', 'thumb__body');
+                    var nameRow = utils.el('div', 'thumb__nameRow');
+                    nameRow.appendChild(utils.el('span', 'thumb__name', photo.name));
+                    if (hasOwnPlacement(photo)) {
+                        var flag = utils.el('span', 'thumb__flag', 'propia');
+                        flag.title = 'Esta foto tiene su propia posición';
+                        nameRow.appendChild(flag);
+                    }
+                    body.appendChild(nameRow);
+                    body.appendChild(utils.el('span', 'thumb__meta',
+                        photo.error ? photo.error : utils.formatBytes(photo.size)));
+
+                    var remove = utils.el('button', 'icon-btn icon-btn--del', '×');
+                    remove.type = 'button';
+                    remove.title = 'Quitar';
+                    remove.setAttribute('aria-label', 'Quitar ' + photo.name);
+                    remove.addEventListener('click', function (event) {
+                        event.stopPropagation();
+                        removePhoto(photo.id);
+                    });
+
+                    item.appendChild(img);
+                    item.appendChild(body);
+                    item.appendChild(remove);
+                    item.addEventListener('click', function () {
+                        selectPhoto(index);
+                        closeSheet();
+                    });
+                    list.appendChild(item);
+                })(i);
+            }
+        }
+
         $('#photo-count').textContent = count === 1 ? '1 foto' : count + ' fotos';
         $('#dock-count').textContent = count ? String(count) : '';
         $('#dock-count').dataset.zero = count ? '0' : '1';
@@ -748,38 +802,76 @@
         var grid = $('#results-grid');
         grid.textContent = '';
 
-        state.results.forEach(function (result) {
-            var card = utils.el('figure', 'result');
+        var total = state.results.length;
+        var totalPages = Math.max(1, Math.ceil(total / RESULTS_PAGE));
+        if (state.resultsPage > totalPages) state.resultsPage = totalPages;
+        if (state.resultsPage < 1) state.resultsPage = 1;
 
-            var link = utils.el('a', 'result__img');
-            link.href = result.url;
-            link.target = '_blank';
-            link.rel = 'noopener';
-            link.title = 'Abrir ' + result.name;
+        var start = (state.resultsPage - 1) * RESULTS_PAGE;
+        var end = Math.min(start + RESULTS_PAGE, total);
 
-            var img = document.createElement('img');
-            img.src = result.url;
-            img.alt = result.name;
-            img.loading = 'lazy';
-            link.appendChild(img);
+        for (var i = start; i < end; i++) {
+            (function (result) {
+                var card = utils.el('figure', 'result');
 
-            var caption = document.createElement('figcaption');
-            var name = utils.el('span', 'result__name', result.name);
-            name.title = result.name;
-            caption.appendChild(name);
-            caption.appendChild(utils.el('span', 'result__meta',
-                result.width + '×' + result.height + ' · ' + utils.formatBytes(result.blob.size)));
+                var link = utils.el('a', 'result__img');
+                link.href = result.url;
+                link.target = '_blank';
+                link.rel = 'noopener';
+                link.title = 'Abrir ' + result.name;
 
-            var save = utils.el('a', 'btn btn--sm', 'Guardar');
-            save.href = result.url;
-            save.download = result.name;
-            save.setAttribute('role', 'button');
+                var img = document.createElement('img');
+                img.src = result.url;
+                img.alt = result.name;
+                img.loading = 'lazy';
+                link.appendChild(img);
 
-            card.appendChild(link);
-            card.appendChild(caption);
-            card.appendChild(save);
-            grid.appendChild(card);
-        });
+                var caption = document.createElement('figcaption');
+                var name = utils.el('span', 'result__name', result.name);
+                name.title = result.name;
+                caption.appendChild(name);
+                caption.appendChild(utils.el('span', 'result__meta',
+                    result.width + '×' + result.height + ' · ' + utils.formatBytes(result.blob.size)));
+
+                var save = utils.el('a', 'btn btn--sm', 'Guardar');
+                save.href = result.url;
+                save.download = result.name;
+                save.setAttribute('role', 'button');
+
+                card.appendChild(link);
+                card.appendChild(caption);
+                card.appendChild(save);
+                grid.appendChild(card);
+            })(state.results[i]);
+        }
+
+        // Paginación
+        var pager = utils.el('div', 'results-pager');
+        if (totalPages > 1) {
+            var prev = utils.el('button', 'btn btn--sm btn--ghost', '← Anterior');
+            prev.type = 'button';
+            prev.disabled = state.resultsPage <= 1;
+            prev.addEventListener('click', function () {
+                state.resultsPage = Math.max(1, state.resultsPage - 1);
+                renderResults();
+            });
+
+            var label = utils.el('span', 'results-pager__label',
+                'Página ' + state.resultsPage + ' de ' + totalPages);
+
+            var next = utils.el('button', 'btn btn--sm btn--ghost', 'Siguiente →');
+            next.type = 'button';
+            next.disabled = state.resultsPage >= totalPages;
+            next.addEventListener('click', function () {
+                state.resultsPage = Math.min(totalPages, state.resultsPage + 1);
+                renderResults();
+            });
+
+            pager.appendChild(prev);
+            pager.appendChild(label);
+            pager.appendChild(next);
+        }
+        grid.appendChild(pager);
 
         var totalBytes = state.results.reduce(function (sum, r) { return sum + r.blob.size; }, 0);
         $('#results-head').textContent = state.results.length
