@@ -493,7 +493,7 @@
             }
         }
 
-        $('#photo-count').textContent = count === 1 ? '1 foto' : count + ' fotos';
+        $('#photo-count').textContent = count + ' / ' + MAX_PHOTOS + ' fotos';
         $('#dock-count').textContent = count ? String(count) : '';
         $('#dock-count').dataset.zero = count ? '0' : '1';
         $('#clear-photos').disabled = count === 0;
